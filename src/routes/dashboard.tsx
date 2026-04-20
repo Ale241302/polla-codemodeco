@@ -1,0 +1,319 @@
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import { format, differenceInMilliseconds } from "date-fns";
+import { es } from "date-fns/locale";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth-context";
+import { AppHeader } from "@/components/AppHeader";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Trophy, Lock, Save, Crown } from "lucide-react";
+
+export const Route = createFileRoute("/dashboard")({
+  component: DashboardPage,
+});
+
+interface Match {
+  id: string;
+  home_team: string;
+  away_team: string;
+  match_date: string;
+  phase: string;
+  status: "scheduled" | "live" | "finished";
+  home_score: number | null;
+  away_score: number | null;
+}
+
+interface Prediction {
+  id: string;
+  match_id: string;
+  home_score: number;
+  away_score: number;
+  points: number;
+}
+
+const DEADLINE_MS = 3 * 60 * 60 * 1000;
+
+function DashboardPage() {
+  const { user, profile, loading } = useAuth();
+  const navigate = useNavigate();
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [predictions, setPredictions] = useState<Record<string, Prediction>>({});
+  const [bonus, setBonus] = useState<{ champion: string; runner_up: string }>({
+    champion: "",
+    runner_up: "",
+  });
+  const [bonusLocked, setBonusLocked] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      navigate({ to: "/login" });
+      return;
+    }
+    if (profile && profile.status !== "approved") {
+      navigate({ to: "/pending" });
+    }
+  }, [user, profile, loading, navigate]);
+
+  useEffect(() => {
+    if (!user || profile?.status !== "approved") return;
+    const load = async () => {
+      setDataLoading(true);
+      const [{ data: m }, { data: p }, { data: b }] = await Promise.all([
+        supabase.from("matches").select("*").order("match_date", { ascending: true }),
+        supabase.from("predictions").select("*").eq("user_id", user.id),
+        supabase.from("bonus_predictions").select("*").eq("user_id", user.id).maybeSingle(),
+      ]);
+      setMatches((m as Match[]) ?? []);
+      const map: Record<string, Prediction> = {};
+      ((p as Prediction[]) ?? []).forEach((pr) => (map[pr.match_id] = pr));
+      setPredictions(map);
+      if (b) {
+        setBonus({ champion: b.champion ?? "", runner_up: b.runner_up ?? "" });
+        setBonusLocked(!!(b.champion_points || b.runner_up_points));
+      }
+      setDataLoading(false);
+    };
+    load();
+  }, [user, profile?.status]);
+
+  const totalPoints = useMemo(
+    () => Object.values(predictions).reduce((s, p) => s + p.points, 0),
+    [predictions],
+  );
+
+  if (loading || !profile || profile.status !== "approved") {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Cargando...
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <AppHeader />
+      <main className="container mx-auto px-3 py-6 sm:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Hola, {profile.full_name.split(" ")[0]}</h1>
+            <p className="text-sm text-muted-foreground">Tus predicciones del Mundial 2026</p>
+          </div>
+          <div className="rounded-xl border bg-card px-4 py-2 shadow-[var(--shadow-soft)]">
+            <p className="text-xs text-muted-foreground">Mis puntos</p>
+            <p className="text-2xl font-bold text-primary">{totalPoints}</p>
+          </div>
+        </div>
+
+        {/* Bonus */}
+        <Card className="mt-6 border-primary/30">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Crown className="h-5 w-5 text-warning" />
+              Bonus: campeón y subcampeón (+10 c/u)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Campeón</label>
+                <Input
+                  value={bonus.champion}
+                  onChange={(e) => setBonus((b) => ({ ...b, champion: e.target.value }))}
+                  placeholder="Ej: Argentina"
+                  disabled={bonusLocked}
+                  maxLength={40}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Subcampeón</label>
+                <Input
+                  value={bonus.runner_up}
+                  onChange={(e) => setBonus((b) => ({ ...b, runner_up: e.target.value }))}
+                  placeholder="Ej: Francia"
+                  disabled={bonusLocked}
+                  maxLength={40}
+                />
+              </div>
+            </div>
+            <Button
+              size="sm"
+              disabled={bonusLocked}
+              onClick={async () => {
+                const champion = bonus.champion.trim();
+                const runner_up = bonus.runner_up.trim();
+                if (!champion || !runner_up) {
+                  toast.error("Ingresa ambos equipos");
+                  return;
+                }
+                const { error } = await supabase
+                  .from("bonus_predictions")
+                  .upsert({ user_id: user!.id, champion, runner_up }, { onConflict: "user_id" });
+                if (error) toast.error(error.message);
+                else toast.success("Bonus guardado");
+              }}
+            >
+              <Save className="mr-1 h-4 w-4" /> Guardar bonus
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Matches */}
+        <h2 className="mt-8 mb-3 text-lg font-semibold text-foreground">Partidos</h2>
+        {dataLoading ? (
+          <p className="text-sm text-muted-foreground">Cargando partidos...</p>
+        ) : matches.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              Aún no hay partidos publicados.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {matches.map((m) => (
+              <MatchRow
+                key={m.id}
+                match={m}
+                userId={user!.id}
+                prediction={predictions[m.id]}
+                onSaved={(p) => setPredictions((prev) => ({ ...prev, [m.id]: p }))}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="mt-8 flex justify-center">
+          <Button asChild variant="outline">
+            <Link to="/leaderboard">
+              <Trophy className="mr-2 h-4 w-4" /> Ver tabla de posiciones
+            </Link>
+          </Button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function MatchRow({
+  match,
+  userId,
+  prediction,
+  onSaved,
+}: {
+  match: Match;
+  userId: string;
+  prediction?: Prediction;
+  onSaved: (p: Prediction) => void;
+}) {
+  const [home, setHome] = useState<string>(prediction?.home_score?.toString() ?? "");
+  const [away, setAway] = useState<string>(prediction?.away_score?.toString() ?? "");
+  const [saving, setSaving] = useState(false);
+
+  const matchTime = new Date(match.match_date);
+  const msToMatch = differenceInMilliseconds(matchTime, new Date());
+  const locked = match.status !== "scheduled" || msToMatch < DEADLINE_MS;
+
+  const save = async () => {
+    const h = parseInt(home, 10);
+    const a = parseInt(away, 10);
+    if (isNaN(h) || isNaN(a) || h < 0 || a < 0 || h > 30 || a > 30) {
+      toast.error("Marcador inválido");
+      return;
+    }
+    setSaving(true);
+    const payload = { user_id: userId, match_id: match.id, home_score: h, away_score: a };
+    const { data, error } = await supabase
+      .from("predictions")
+      .upsert(payload, { onConflict: "user_id,match_id" })
+      .select()
+      .single();
+    setSaving(false);
+    if (error) {
+      toast.error("No se pudo guardar (¿menos de 3h al partido?)");
+      return;
+    }
+    toast.success("Predicción guardada");
+    onSaved(data as Prediction);
+  };
+
+  return (
+    <Card className={locked ? "opacity-90" : ""}>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2">
+          <Badge variant="secondary" className="text-[10px]">{match.phase}</Badge>
+          <span className="text-xs text-muted-foreground">
+            {format(matchTime, "EEE d MMM, HH:mm", { locale: es })}
+          </span>
+        </div>
+
+        <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <div className="text-right">
+            <p className="font-semibold text-foreground">{match.home_team}</p>
+          </div>
+          <div className="flex items-center gap-1">
+            <Input
+              className="h-10 w-12 text-center text-base"
+              inputMode="numeric"
+              value={home}
+              onChange={(e) => setHome(e.target.value.replace(/\D/g, "").slice(0, 2))}
+              disabled={locked}
+            />
+            <span className="text-muted-foreground">–</span>
+            <Input
+              className="h-10 w-12 text-center text-base"
+              inputMode="numeric"
+              value={away}
+              onChange={(e) => setAway(e.target.value.replace(/\D/g, "").slice(0, 2))}
+              disabled={locked}
+            />
+          </div>
+          <div>
+            <p className="font-semibold text-foreground">{match.away_team}</p>
+          </div>
+        </div>
+
+        {match.status === "finished" && match.home_score !== null && (
+          <div className="mt-3 rounded-md bg-muted px-3 py-2 text-center text-sm">
+            Resultado real:{" "}
+            <span className="font-bold text-primary">
+              {match.home_score} – {match.away_score}
+            </span>
+            {prediction && (
+              <span className="ml-2 font-semibold text-success">
+                +{prediction.points} pts
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center justify-between gap-2">
+          {locked ? (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Lock className="h-3 w-3" />
+              {match.status === "finished"
+                ? "Partido finalizado"
+                : match.status === "live"
+                  ? "En juego"
+                  : "Cerrado (faltan menos de 3h)"}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              Cierra: {format(new Date(matchTime.getTime() - DEADLINE_MS), "d MMM HH:mm", { locale: es })}
+            </span>
+          )}
+          {!locked && (
+            <Button size="sm" onClick={save} disabled={saving}>
+              <Save className="mr-1 h-4 w-4" />
+              {saving ? "Guardando..." : prediction ? "Actualizar" : "Guardar"}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
