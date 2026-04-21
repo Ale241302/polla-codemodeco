@@ -3,9 +3,22 @@
   "framework": null,
   "installCommand": "npm install --legacy-peer-deps",
   "buildCommand": "npm run build",
+  "outputDirectory": ".output/public",
   "build": {
     "env": {
       "NITRO_PRESET": "vercel"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "functions": {
+    "api/index.mjs": {
+      "memory": 1024,
+      "maxDuration": 10
     }
   }
 }
