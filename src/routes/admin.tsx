@@ -329,7 +329,6 @@ function ResultsTab() {
       .update({ home_score: h, away_score: a, status })
       .eq("id", matchId);
     if (error) return toast.error(error.message);
-    // recalc points
     const { error: e2 } = await supabase.rpc("recalculate_match_points", { p_match_id: matchId });
     if (e2) toast.error(e2.message);
     else toast.success("Resultado y puntajes actualizados");
@@ -348,27 +347,22 @@ function ResultsTab() {
     const champion = tournament.champion.trim() || null;
     const runner_up = tournament.runner_up.trim() || null;
 
-    // Upsert por si la fila id=1 nunca se creó (defensa: si el INSERT del
-    // seed original falló o fue reseteado, update() silenciosamente no hace nada).
     const { error } = await supabase
       .from("tournament_result")
       .upsert({ id: 1, champion, runner_up }, { onConflict: "id" });
     if (error) return toast.error(error.message);
 
-    // La función nueva devuelve JSONB con el diagnóstico exacto.
-    // Si el admin todavía no aplicó la migración 20260421030038 el tipo
-    // será null (versión vieja retorna void); en ese caso hacemos fallback.
     const { data: rpcData, error: rpcErr } = await supabase.rpc("recalculate_bonus_points");
     if (rpcErr) return toast.error(rpcErr.message);
 
     const diag = rpcData as
       | {
-          total_bonus_rows: number;
-          champion_hits: number;
-          runner_up_hits: number;
-          champion: string | null;
-          runner_up: string | null;
-        }
+        total_bonus_rows: number;
+        champion_hits: number;
+        runner_up_hits: number;
+        champion: string | null;
+        runner_up: string | null;
+      }
       | null;
 
     if (diag && typeof diag.total_bonus_rows === "number") {
@@ -376,8 +370,7 @@ function ResultsTab() {
         toast.warning("Resultado guardado, pero ningún usuario ha predicho bonus aún.");
       } else {
         toast.success(
-          `Bonus recalculado — ${diag.total_bonus_rows} predicción${
-            diag.total_bonus_rows === 1 ? "" : "es"
+          `Bonus recalculado — ${diag.total_bonus_rows} predicción${diag.total_bonus_rows === 1 ? "" : "es"
           } revisadas · ${diag.champion_hits} acertaron campeón · ${diag.runner_up_hits} acertaron subcampeón.`,
         );
       }
@@ -488,23 +481,32 @@ function PredictionsTab() {
 
   const load = async () => {
     setLoading(true);
-    const [{ data: preds }, { data: bonus }, { data: setting }] = await Promise.all([
+    // Queries separadas: no usamos embed de PostgREST porque
+    // predictions.user_id referencia auth.users(id), no profiles.id,
+    // así que Supabase no puede inferir el join y devolvería 0 filas.
+    const [
+      { data: preds, error: e1 },
+      { data: bonus, error: e2 },
+      { data: profs, error: e3 },
+      { data: matchList, error: e4 },
+      { data: setting, error: e5 },
+    ] = await Promise.all([
       supabase
         .from("predictions")
-        .select(
-          "id, user_id, match_id, home_score, away_score, points, " +
-            "profiles!inner(full_name, cedula), " +
-            "matches!inner(home_team, away_team, match_date, status)",
-        )
+        .select("id, user_id, match_id, home_score, away_score, points")
         .order("match_id", { ascending: true }),
       supabase
         .from("bonus_predictions")
-        .select(
-          "id, user_id, champion, runner_up, champion_points, runner_up_points, " +
-            "profiles!inner(full_name, cedula)",
-        ),
+        .select("id, user_id, champion, runner_up, champion_points, runner_up_points"),
+      supabase.from("profiles").select("id, full_name, cedula"),
+      supabase.from("matches").select("id, home_team, away_team, match_date, status"),
       supabase.from("app_settings").select("value").eq("key", "bonus_enabled").maybeSingle(),
     ]);
+
+    const firstError = e1 ?? e2 ?? e3 ?? e4 ?? e5;
+    if (firstError) {
+      toast.error(`Error cargando predicciones: ${firstError.message}`);
+    }
 
     type PredRaw = {
       id: string;
@@ -513,13 +515,6 @@ function PredictionsTab() {
       home_score: number;
       away_score: number;
       points: number;
-      profiles: { full_name: string; cedula: string } | null;
-      matches: {
-        home_team: string;
-        away_team: string;
-        match_date: string;
-        status: Match["status"];
-      } | null;
     };
     type BonusRaw = {
       id: string;
@@ -528,41 +523,61 @@ function PredictionsTab() {
       runner_up: string | null;
       champion_points: number;
       runner_up_points: number;
-      profiles: { full_name: string; cedula: string } | null;
+    };
+    type ProfileLite = { id: string; full_name: string; cedula: string };
+    type MatchLite = {
+      id: string;
+      home_team: string;
+      away_team: string;
+      match_date: string;
+      status: Match["status"];
     };
 
-    const mp = ((preds as unknown as PredRaw[]) ?? []).map((p) => ({
-      id: p.id,
-      user_id: p.user_id,
-      match_id: p.match_id,
-      home_score: p.home_score,
-      away_score: p.away_score,
-      points: p.points,
-      user_name: p.profiles?.full_name ?? "—",
-      user_cedula: p.profiles?.cedula ?? "—",
-      match_label: p.matches ? `${p.matches.home_team} vs ${p.matches.away_team}` : "—",
-      match_status: p.matches?.status ?? "scheduled",
-      match_date: p.matches?.match_date ?? "",
-    }));
+    const profileById = new Map<string, ProfileLite>();
+    ((profs as ProfileLite[] | null) ?? []).forEach((p) => profileById.set(p.id, p));
 
-    const bp = ((bonus as unknown as BonusRaw[]) ?? []).map((b) => ({
-      id: b.id,
-      user_id: b.user_id,
-      champion: b.champion,
-      runner_up: b.runner_up,
-      champion_points: b.champion_points,
-      runner_up_points: b.runner_up_points,
-      user_name: b.profiles?.full_name ?? "—",
-      user_cedula: b.profiles?.cedula ?? "—",
-    }));
+    const matchById = new Map<string, MatchLite>();
+    ((matchList as MatchLite[] | null) ?? []).forEach((m) => matchById.set(m.id, m));
+
+    const mp: MatchPredictionRow[] = ((preds as PredRaw[] | null) ?? []).map((p) => {
+      const prof = profileById.get(p.user_id);
+      const m = matchById.get(p.match_id);
+      return {
+        id: p.id,
+        user_id: p.user_id,
+        match_id: p.match_id,
+        home_score: p.home_score,
+        away_score: p.away_score,
+        points: p.points,
+        user_name: prof?.full_name ?? "—",
+        user_cedula: prof?.cedula ?? "—",
+        match_label: m ? `${m.home_team} vs ${m.away_team}` : "—",
+        match_status: m?.status ?? "scheduled",
+        match_date: m?.match_date ?? "",
+      };
+    });
+
+    const bp: BonusPredictionRow[] = ((bonus as BonusRaw[] | null) ?? []).map((b) => {
+      const prof = profileById.get(b.user_id);
+      return {
+        id: b.id,
+        user_id: b.user_id,
+        champion: b.champion,
+        runner_up: b.runner_up,
+        champion_points: b.champion_points,
+        runner_up_points: b.runner_up_points,
+        user_name: prof?.full_name ?? "—",
+        user_cedula: prof?.cedula ?? "—",
+      };
+    });
 
     setMatchPreds(mp);
     setBonusPreds(bp);
-    if (setting && typeof setting.value === "boolean") {
-      setBonusEnabled(setting.value);
-    } else if (setting && setting.value != null) {
-      // jsonb puede venir como string "true"/"false" o boolean nativo
+
+    if (setting && setting.value != null) {
       setBonusEnabled(setting.value === true || setting.value === "true");
+    } else {
+      setBonusEnabled(true);
     }
     setLoading(false);
   };
@@ -597,39 +612,33 @@ function PredictionsTab() {
     if (!confirm(`¿Borrar la predicción de ${row.user_name} para ${row.match_label}?`)) return;
     const { error } = await supabase.from("predictions").delete().eq("id", row.id);
     if (error) toast.error(error.message);
-    else {
-      toast.success("Predicción eliminada");
-      load();
-    }
+    else { toast.success("Predicción eliminada"); load(); }
   };
 
   const deleteBonusPred = async (row: BonusPredictionRow) => {
     if (!confirm(`¿Borrar la predicción bonus de ${row.user_name}?`)) return;
     const { error } = await supabase.from("bonus_predictions").delete().eq("id", row.id);
     if (error) toast.error(error.message);
-    else {
-      toast.success("Predicción bonus eliminada");
-      load();
-    }
+    else { toast.success("Predicción bonus eliminada"); load(); }
   };
 
   const q = filter.trim().toLowerCase();
   const filteredMatch = q
     ? matchPreds.filter(
-        (p) =>
-          p.user_name.toLowerCase().includes(q) ||
-          p.user_cedula.toLowerCase().includes(q) ||
-          p.match_label.toLowerCase().includes(q),
-      )
+      (p) =>
+        p.user_name.toLowerCase().includes(q) ||
+        p.user_cedula.toLowerCase().includes(q) ||
+        p.match_label.toLowerCase().includes(q),
+    )
     : matchPreds;
   const filteredBonus = q
     ? bonusPreds.filter(
-        (b) =>
-          b.user_name.toLowerCase().includes(q) ||
-          b.user_cedula.toLowerCase().includes(q) ||
-          (b.champion ?? "").toLowerCase().includes(q) ||
-          (b.runner_up ?? "").toLowerCase().includes(q),
-      )
+      (b) =>
+        b.user_name.toLowerCase().includes(q) ||
+        b.user_cedula.toLowerCase().includes(q) ||
+        (b.champion ?? "").toLowerCase().includes(q) ||
+        (b.runner_up ?? "").toLowerCase().includes(q),
+    )
     : bonusPreds;
 
   return (
@@ -677,9 +686,7 @@ function PredictionsTab() {
           <section>
             <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-foreground">
               <ListChecks className="h-5 w-5" /> Predicciones de partidos
-              <Badge variant="secondary" className="ml-1">
-                {filteredMatch.length}
-              </Badge>
+              <Badge variant="secondary" className="ml-1">{filteredMatch.length}</Badge>
             </h2>
             {filteredMatch.length === 0 ? (
               <p className="text-sm text-muted-foreground">Sin predicciones.</p>
@@ -692,9 +699,7 @@ function PredictionsTab() {
                       <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3">
                         <div className="min-w-0">
                           <p className="font-semibold text-foreground">{p.user_name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Cédula: {p.user_cedula}
-                          </p>
+                          <p className="text-xs text-muted-foreground">Cédula: {p.user_cedula}</p>
                           <p className="mt-1 text-sm">
                             <span className="font-medium">{p.match_label}</span>
                             <span className="ml-2 rounded-md bg-muted px-2 py-0.5 text-xs font-semibold">
@@ -736,9 +741,8 @@ function PredictionsTab() {
                             }
                           >
                             <Trash2
-                              className={`h-4 w-4 ${
-                                locked ? "text-muted-foreground" : "text-destructive"
-                              }`}
+                              className={`h-4 w-4 ${locked ? "text-muted-foreground" : "text-destructive"
+                                }`}
                             />
                           </Button>
                         </div>
@@ -754,9 +758,7 @@ function PredictionsTab() {
           <section>
             <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-foreground">
               <Crown className="h-5 w-5 text-warning" /> Predicciones bonus (campeón / subcampeón)
-              <Badge variant="secondary" className="ml-1">
-                {filteredBonus.length}
-              </Badge>
+              <Badge variant="secondary" className="ml-1">{filteredBonus.length}</Badge>
             </h2>
             {filteredBonus.length === 0 ? (
               <p className="text-sm text-muted-foreground">Sin predicciones bonus.</p>
