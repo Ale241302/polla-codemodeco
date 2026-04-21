@@ -46,9 +46,13 @@ BEGIN
 
   RAISE NOTICE 'recalculate_bonus_points: champion=%, runner_up=%', v_champ, v_runner;
 
+  -- WHERE user_id IS NOT NULL matchea todas las filas (user_id es NOT NULL
+  -- en el schema) pero satisface la extensión pg_safeupdate que Supabase
+  -- activa por defecto y bloquearía un UPDATE "abierto".
   UPDATE public.bonus_predictions
   SET champion_points  = CASE WHEN v_champ  IS NOT NULL AND champion  = v_champ  THEN 10 ELSE 0 END,
-      runner_up_points = CASE WHEN v_runner IS NOT NULL AND runner_up = v_runner THEN 10 ELSE 0 END;
+      runner_up_points = CASE WHEN v_runner IS NOT NULL AND runner_up = v_runner THEN 10 ELSE 0 END
+  WHERE user_id IS NOT NULL;
 
   SELECT
     COUNT(*)                                     ,
