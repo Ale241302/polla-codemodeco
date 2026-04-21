@@ -81,15 +81,17 @@ export default async function handler(req, res) {
 const wrapperPath = join(root, ".vercel", "_ssr-wrapper.mjs");
 await writeFile(wrapperPath, wrapperSource);
 
-console.log("[build-vercel] Bundling SSR con esbuild → functions/__ssr.func/index.mjs");
+console.log("[build-vercel] Bundling SSR con esbuild → functions/__ssr.func/");
 await esbuild({
-  entryPoints: [wrapperPath],
+  entryPoints: [{ in: wrapperPath, out: "index" }],
   bundle: true,
-  outfile: join(funcDir, "index.mjs"),
+  outdir: funcDir,
+  outExtension: { ".js": ".mjs" },
   platform: "node",
   target: "node22",
   format: "esm",
-  // createRequire shim: algunos paquetes CJS dependen de require.
+  splitting: true,
+  // createRequire shim: algunos paquetes CJS dependen de require().
   banner: {
     js: `import { createRequire as __cr } from "module";const require = __cr(import.meta.url);`,
   },

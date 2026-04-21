@@ -118,7 +118,7 @@ Todas las tablas viven en el schema `public` con Row Level Security activado.
 
 ## 5. Deploy
 
-El scaffold inicial está configurado para **Cloudflare Workers** (viene con `@cloudflare/vite-plugin` como dependencia fija y un `wrangler.jsonc`). Para desplegar a **Vercel** hay que cambiar el preset de Nitro. A continuación están los dos caminos.
+El proyecto incluye un post-build (`scripts/build-vercel.mjs`) que genera `.vercel/output/` (Vercel Build Output API v3): servicio estático de `dist/client/` + una función serverless `__ssr` que envuelve el handler SSR de TanStack Start y bundlea todas las dependencias con esbuild.
 
 ### Subir a GitHub (común a ambos)
 
@@ -134,42 +134,18 @@ git push -u origin main
 ### Opción A — Vercel
 
 1. Ve a [vercel.com/new](https://vercel.com/new) e importa el repo.
-2. En **Framework Preset** elige `Other`.
+2. En **Framework Preset** elige `Other` (no Next.js ni Vite).
 3. Añade las **Environment Variables**:
 
    | Variable | Valor |
    |---|---|
-   | `NITRO_PRESET` | `vercel` |
    | `VITE_SUPABASE_URL` | tu URL de Supabase |
    | `VITE_SUPABASE_PUBLISHABLE_KEY` | tu anon key |
    | `VITE_SUPABASE_PROJECT_ID` | tu ref de proyecto |
    | `SUPABASE_URL` | igual que VITE_SUPABASE_URL |
    | `SUPABASE_PUBLISHABLE_KEY` | igual que la anon key |
 
-4. **Deploy**. Vercel detectará el `vercel.json` y pasará `NITRO_PRESET=vercel` al build.
-5. Si el build falla porque el plugin de Cloudflare interfiere, abre `vite.config.ts` y reemplázalo por:
-
-   ```ts
-   import { defineConfig } from "vite";
-   import viteReact from "@vitejs/plugin-react";
-   import tailwindcss from "@tailwindcss/vite";
-   import tsConfigPaths from "vite-tsconfig-paths";
-   import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
-   import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-
-   export default defineConfig({
-     plugins: [
-       tsConfigPaths(),
-       TanStackRouterVite({ target: "react", autoCodeSplitting: true }),
-       tanstackStart({ server: { preset: process.env.NITRO_PRESET ?? "vercel" } }),
-       viteReact(),
-       tailwindcss(),
-     ],
-   });
-   ```
-
-   Este reemplazo elimina `@lovable.dev/vite-tanstack-config` y el plugin de Cloudflare, que no son necesarios para Vercel.
-6. Vuelve a hacer deploy.
+4. **Deploy**. Vercel ejecutará `npm run build`, que a su vez corre `vite build && node scripts/build-vercel.mjs`. El script produce `.vercel/output/` y Vercel lo detecta automáticamente.
 
 ### Opción B — Cloudflare Workers (sin cambios de código)
 
@@ -249,6 +225,8 @@ polla-codemodeco/
 │   └── styles.css
 ├── supabase/
 │   └── migrations/               # 4 migraciones en orden cronológico
+├── scripts/
+│   └── build-vercel.mjs          # post-build: genera .vercel/output/ (Build Output API v3)
 ├── .env.example
 ├── .gitignore
 ├── package.json
