@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Check, X, Lock, Trash2, Plus, RefreshCw, Save, Crown } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Check, X, Lock, Trash2, Plus, RefreshCw, Save, Crown, ListChecks } from "lucide-react";
 
 export const Route = createFileRoute("/admin")({
   component: AdminPage,
@@ -70,14 +71,16 @@ function AdminPage() {
         <p className="text-sm text-muted-foreground">Gestión de usuarios, partidos y resultados</p>
 
         <Tabs defaultValue="users" className="mt-6">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
             <TabsTrigger value="users">Usuarios</TabsTrigger>
             <TabsTrigger value="matches">Partidos</TabsTrigger>
             <TabsTrigger value="results">Resultados</TabsTrigger>
+            <TabsTrigger value="predictions">Predicciones</TabsTrigger>
           </TabsList>
           <TabsContent value="users" className="mt-4"><UsersTab /></TabsContent>
           <TabsContent value="matches" className="mt-4"><MatchesTab /></TabsContent>
           <TabsContent value="results" className="mt-4"><ResultsTab /></TabsContent>
+          <TabsContent value="predictions" className="mt-4"><PredictionsTab /></TabsContent>
         </Tabs>
       </main>
     </div>
@@ -446,6 +449,359 @@ function ResultsTab() {
           <p className="text-center text-sm text-muted-foreground">No hay partidos</p>
         )}
       </div>
+    </div>
+  );
+}
+
+// =============== PREDICTIONS (admin) ===============
+interface MatchPredictionRow {
+  id: string;
+  user_id: string;
+  match_id: string;
+  home_score: number;
+  away_score: number;
+  points: number;
+  user_name: string;
+  user_cedula: string;
+  match_label: string;
+  match_status: Match["status"];
+  match_date: string;
+}
+
+interface BonusPredictionRow {
+  id: string;
+  user_id: string;
+  champion: string | null;
+  runner_up: string | null;
+  champion_points: number;
+  runner_up_points: number;
+  user_name: string;
+  user_cedula: string;
+}
+
+function PredictionsTab() {
+  const [matchPreds, setMatchPreds] = useState<MatchPredictionRow[]>([]);
+  const [bonusPreds, setBonusPreds] = useState<BonusPredictionRow[]>([]);
+  const [bonusEnabled, setBonusEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    const [{ data: preds }, { data: bonus }, { data: setting }] = await Promise.all([
+      supabase
+        .from("predictions")
+        .select(
+          "id, user_id, match_id, home_score, away_score, points, " +
+            "profiles!inner(full_name, cedula), " +
+            "matches!inner(home_team, away_team, match_date, status)",
+        )
+        .order("match_id", { ascending: true }),
+      supabase
+        .from("bonus_predictions")
+        .select(
+          "id, user_id, champion, runner_up, champion_points, runner_up_points, " +
+            "profiles!inner(full_name, cedula)",
+        ),
+      supabase.from("app_settings").select("value").eq("key", "bonus_enabled").maybeSingle(),
+    ]);
+
+    type PredRaw = {
+      id: string;
+      user_id: string;
+      match_id: string;
+      home_score: number;
+      away_score: number;
+      points: number;
+      profiles: { full_name: string; cedula: string } | null;
+      matches: {
+        home_team: string;
+        away_team: string;
+        match_date: string;
+        status: Match["status"];
+      } | null;
+    };
+    type BonusRaw = {
+      id: string;
+      user_id: string;
+      champion: string | null;
+      runner_up: string | null;
+      champion_points: number;
+      runner_up_points: number;
+      profiles: { full_name: string; cedula: string } | null;
+    };
+
+    const mp = ((preds as unknown as PredRaw[]) ?? []).map((p) => ({
+      id: p.id,
+      user_id: p.user_id,
+      match_id: p.match_id,
+      home_score: p.home_score,
+      away_score: p.away_score,
+      points: p.points,
+      user_name: p.profiles?.full_name ?? "—",
+      user_cedula: p.profiles?.cedula ?? "—",
+      match_label: p.matches ? `${p.matches.home_team} vs ${p.matches.away_team}` : "—",
+      match_status: p.matches?.status ?? "scheduled",
+      match_date: p.matches?.match_date ?? "",
+    }));
+
+    const bp = ((bonus as unknown as BonusRaw[]) ?? []).map((b) => ({
+      id: b.id,
+      user_id: b.user_id,
+      champion: b.champion,
+      runner_up: b.runner_up,
+      champion_points: b.champion_points,
+      runner_up_points: b.runner_up_points,
+      user_name: b.profiles?.full_name ?? "—",
+      user_cedula: b.profiles?.cedula ?? "—",
+    }));
+
+    setMatchPreds(mp);
+    setBonusPreds(bp);
+    if (setting && typeof setting.value === "boolean") {
+      setBonusEnabled(setting.value);
+    } else if (setting && setting.value != null) {
+      // jsonb puede venir como string "true"/"false" o boolean nativo
+      setBonusEnabled(setting.value === true || setting.value === "true");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const toggleBonus = async (next: boolean) => {
+    setBonusEnabled(next);
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert(
+        { key: "bonus_enabled", value: next as unknown as object },
+        { onConflict: "key" },
+      );
+    if (error) {
+      toast.error(error.message);
+      setBonusEnabled(!next);
+    } else {
+      toast.success(
+        next ? "Predicciones bonus habilitadas" : "Predicciones bonus deshabilitadas",
+      );
+    }
+  };
+
+  const deleteMatchPred = async (row: MatchPredictionRow) => {
+    if (row.match_status !== "scheduled") {
+      toast.error("No se puede borrar: el partido ya inició o finalizó");
+      return;
+    }
+    if (!confirm(`¿Borrar la predicción de ${row.user_name} para ${row.match_label}?`)) return;
+    const { error } = await supabase.from("predictions").delete().eq("id", row.id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Predicción eliminada");
+      load();
+    }
+  };
+
+  const deleteBonusPred = async (row: BonusPredictionRow) => {
+    if (!confirm(`¿Borrar la predicción bonus de ${row.user_name}?`)) return;
+    const { error } = await supabase.from("bonus_predictions").delete().eq("id", row.id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Predicción bonus eliminada");
+      load();
+    }
+  };
+
+  const q = filter.trim().toLowerCase();
+  const filteredMatch = q
+    ? matchPreds.filter(
+        (p) =>
+          p.user_name.toLowerCase().includes(q) ||
+          p.user_cedula.toLowerCase().includes(q) ||
+          p.match_label.toLowerCase().includes(q),
+      )
+    : matchPreds;
+  const filteredBonus = q
+    ? bonusPreds.filter(
+        (b) =>
+          b.user_name.toLowerCase().includes(q) ||
+          b.user_cedula.toLowerCase().includes(q) ||
+          (b.champion ?? "").toLowerCase().includes(q) ||
+          (b.runner_up ?? "").toLowerCase().includes(q),
+      )
+    : bonusPreds;
+
+  return (
+    <div className="space-y-6">
+      {/* Toggle bonus enabled */}
+      <Card className="border-primary/30">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <p className="flex items-center gap-2 font-semibold text-foreground">
+              <Crown className="h-4 w-4 text-warning" />
+              Permitir predicciones de campeón y subcampeón
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Cuando está desactivado, los usuarios no podrán agregar ni modificar su bonus desde
+              el dashboard.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {bonusEnabled ? "Habilitado" : "Deshabilitado"}
+            </span>
+            <Switch checked={bonusEnabled} onCheckedChange={toggleBonus} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Filtro */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          placeholder="Filtrar por usuario, cédula, partido o equipo..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="max-w-md"
+        />
+        <Button variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="mr-1 h-4 w-4" /> Recargar
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Cargando predicciones...</p>
+      ) : (
+        <>
+          {/* Predicciones de partidos */}
+          <section>
+            <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <ListChecks className="h-5 w-5" /> Predicciones de partidos
+              <Badge variant="secondary" className="ml-1">
+                {filteredMatch.length}
+              </Badge>
+            </h2>
+            {filteredMatch.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin predicciones.</p>
+            ) : (
+              <div className="space-y-2">
+                {filteredMatch.map((p) => {
+                  const locked = p.match_status !== "scheduled";
+                  return (
+                    <Card key={p.id}>
+                      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-foreground">{p.user_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Cédula: {p.user_cedula}
+                          </p>
+                          <p className="mt-1 text-sm">
+                            <span className="font-medium">{p.match_label}</span>
+                            <span className="ml-2 rounded-md bg-muted px-2 py-0.5 text-xs font-semibold">
+                              {p.home_score} – {p.away_score}
+                            </span>
+                            {p.points > 0 && (
+                              <span className="ml-2 text-xs font-semibold text-success">
+                                +{p.points} pts
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              p.match_status === "finished"
+                                ? "secondary"
+                                : p.match_status === "live"
+                                  ? "destructive"
+                                  : "default"
+                            }
+                            className="text-[10px]"
+                          >
+                            {p.match_status === "scheduled"
+                              ? "Programado"
+                              : p.match_status === "live"
+                                ? "En juego"
+                                : "Finalizado"}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={locked}
+                            onClick={() => deleteMatchPred(p)}
+                            title={
+                              locked
+                                ? "No se puede borrar: el partido ya inició o finalizó"
+                                : "Eliminar predicción"
+                            }
+                          >
+                            <Trash2
+                              className={`h-4 w-4 ${
+                                locked ? "text-muted-foreground" : "text-destructive"
+                              }`}
+                            />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* Predicciones bonus */}
+          <section>
+            <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <Crown className="h-5 w-5 text-warning" /> Predicciones bonus (campeón / subcampeón)
+              <Badge variant="secondary" className="ml-1">
+                {filteredBonus.length}
+              </Badge>
+            </h2>
+            {filteredBonus.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin predicciones bonus.</p>
+            ) : (
+              <div className="space-y-2">
+                {filteredBonus.map((b) => (
+                  <Card key={b.id}>
+                    <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-foreground">{b.user_name}</p>
+                        <p className="text-xs text-muted-foreground">Cédula: {b.user_cedula}</p>
+                        <p className="mt-1 text-sm">
+                          <span className="text-muted-foreground">Campeón:</span>{" "}
+                          <span className="font-medium">{b.champion ?? "—"}</span>
+                          {b.champion_points > 0 && (
+                            <span className="ml-1 text-xs font-semibold text-success">
+                              +{b.champion_points}
+                            </span>
+                          )}
+                          <span className="mx-2 text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">Subcampeón:</span>{" "}
+                          <span className="font-medium">{b.runner_up ?? "—"}</span>
+                          {b.runner_up_points > 0 && (
+                            <span className="ml-1 text-xs font-semibold text-success">
+                              +{b.runner_up_points}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => deleteBonusPred(b)}
+                        title="Eliminar predicción bonus"
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }

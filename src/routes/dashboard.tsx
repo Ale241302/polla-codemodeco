@@ -63,6 +63,7 @@ function DashboardPage() {
   });
   const [bonusPoints, setBonusPoints] = useState(0);
   const [bonusLocked, setBonusLocked] = useState(false);
+  const [bonusEnabled, setBonusEnabled] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
@@ -80,14 +81,21 @@ function DashboardPage() {
     if (!user || profile?.status !== "approved") return;
     const load = async () => {
       setDataLoading(true);
-      const [{ data: m }, { data: p }, { data: b }, { data: t }] = await Promise.all([
+      const [{ data: m }, { data: p }, { data: b }, { data: t }, { data: s }] = await Promise.all([
         supabase.from("matches").select("*").order("match_date", { ascending: true }),
         supabase.from("predictions").select("*").eq("user_id", user.id),
         supabase.from("bonus_predictions").select("*").eq("user_id", user.id).maybeSingle(),
         supabase.from("teams").select("*").order("name"),
+        supabase.from("app_settings").select("value").eq("key", "bonus_enabled").maybeSingle(),
       ]);
       setMatches((m as Match[]) ?? []);
       setTeams((t as Team[]) ?? []);
+      // Si el setting no existe, default = true (bonus habilitado).
+      if (s && s.value != null) {
+        setBonusEnabled(s.value === true || s.value === "true");
+      } else {
+        setBonusEnabled(true);
+      }
       const map: Record<string, Prediction> = {};
       ((p as Prediction[]) ?? []).forEach((pr) => (map[pr.match_id] = pr));
       setPredictions(map);
@@ -175,13 +183,19 @@ function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {!bonusEnabled && (
+              <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+                El administrador ha deshabilitado temporalmente las predicciones de campeón y
+                subcampeón.
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Campeón</label>
                 <Select
                   value={bonus.champion}
                   onValueChange={(v) => setBonus((b) => ({ ...b, champion: v }))}
-                  disabled={bonusLocked}
+                  disabled={bonusLocked || !bonusEnabled}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecciona campeón" />
@@ -200,7 +214,7 @@ function DashboardPage() {
                 <Select
                   value={bonus.runner_up}
                   onValueChange={(v) => setBonus((b) => ({ ...b, runner_up: v }))}
-                  disabled={bonusLocked}
+                  disabled={bonusLocked || !bonusEnabled}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecciona subcampeón" />
@@ -217,8 +231,12 @@ function DashboardPage() {
             </div>
             <Button
               size="sm"
-              disabled={bonusLocked}
+              disabled={bonusLocked || !bonusEnabled}
               onClick={async () => {
+                if (!bonusEnabled) {
+                  toast.error("Las predicciones bonus están deshabilitadas por el administrador");
+                  return;
+                }
                 const champion = bonus.champion.trim();
                 const runner_up = bonus.runner_up.trim();
                 if (!champion || !runner_up) {
