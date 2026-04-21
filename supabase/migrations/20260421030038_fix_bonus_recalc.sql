@@ -27,6 +27,10 @@ ON CONFLICT (id) DO NOTHING;
 --      su propia fila);
 --    - devuelve JSONB con el conteo, para diagnóstico;
 --    - emite NOTICE con los nombres leídos del torneo.
+-- Nota: la versión vieja retornaba VOID. CREATE OR REPLACE no permite
+-- cambiar el tipo de retorno, así que la dropeamos primero.
+DROP FUNCTION IF EXISTS public.recalculate_bonus_points();
+
 CREATE OR REPLACE FUNCTION public.recalculate_bonus_points()
 RETURNS JSONB
 LANGUAGE plpgsql

@@ -61,6 +61,7 @@ function DashboardPage() {
     champion: "",
     runner_up: "",
   });
+  const [bonusPoints, setBonusPoints] = useState(0);
   const [bonusLocked, setBonusLocked] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -92,7 +93,10 @@ function DashboardPage() {
       setPredictions(map);
       if (b) {
         setBonus({ champion: b.champion ?? "", runner_up: b.runner_up ?? "" });
+        setBonusPoints((b.champion_points ?? 0) + (b.runner_up_points ?? 0));
         setBonusLocked(!!(b.champion_points || b.runner_up_points));
+      } else {
+        setBonusPoints(0);
       }
       setDataLoading(false);
     };
@@ -100,8 +104,8 @@ function DashboardPage() {
   }, [user, profile?.status]);
 
   const totalPoints = useMemo(
-    () => Object.values(predictions).reduce((s, p) => s + p.points, 0),
-    [predictions],
+    () => Object.values(predictions).reduce((s, p) => s + p.points, 0) + bonusPoints,
+    [predictions, bonusPoints],
   );
 
   // Partidos que cierran en las próximas 6 horas y no tienen predicción aún
