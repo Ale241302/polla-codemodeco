@@ -5,6 +5,7 @@ import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { asUtcLocal } from "@/lib/utils";
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -339,7 +340,7 @@ function MatchRow({
         <div className="flex items-center justify-between gap-2">
           <Badge variant="secondary" className="text-[10px]">{match.phase}</Badge>
           <span className="text-xs text-muted-foreground">
-            {format(matchTime, "EEE d MMM, HH:mm", { locale: es })}
+            {format(asUtcLocal(matchTime), "EEE d MMM, HH:mm", { locale: es })}
           </span>
         </div>
 
@@ -395,7 +396,7 @@ function MatchRow({
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">
-              Cierra: {format(new Date(matchTime.getTime() - DEADLINE_MS), "d MMM HH:mm", { locale: es })}
+              Cierra: {format(asUtcLocal(new Date(matchTime.getTime() - DEADLINE_MS)), "d MMM HH:mm", { locale: es })}
             </span>
           )}
           {!locked && (

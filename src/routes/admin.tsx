@@ -5,6 +5,7 @@ import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { asUtcLocal } from "@/lib/utils";
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -284,7 +285,7 @@ function MatchesTab() {
                 <div>
                   <p className="font-semibold">{m.home_team} vs {m.away_team}</p>
                   <p className="text-xs text-muted-foreground">
-                    {format(new Date(m.match_date), "EEE d MMM HH:mm", { locale: es })} · {m.phase}
+                    {format(asUtcLocal(m.match_date), "EEE d MMM HH:mm", { locale: es })} · {m.phase}
                   </p>
                   <Badge variant="secondary" className="mt-1">{m.status}</Badge>
                 </div>
@@ -826,7 +827,7 @@ function ResultRow({
           <div>
             <p className="font-semibold">{match.home_team} vs {match.away_team}</p>
             <p className="text-xs text-muted-foreground">
-              {format(new Date(match.match_date), "d MMM HH:mm", { locale: es })} · {match.phase}
+              {format(asUtcLocal(match.match_date), "d MMM HH:mm", { locale: es })} · {match.phase}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
