@@ -2,23 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm install --legacy-peer-deps",
-  "buildCommand": "npm run build",
-  "outputDirectory": ".output/public",
-  "build": {
-    "env": {
-      "NITRO_PRESET": "vercel"
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index"
-    }
-  ],
-  "functions": {
-    "api/index.mjs": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
-  }
+  "buildCommand": "npm run build"
 }
