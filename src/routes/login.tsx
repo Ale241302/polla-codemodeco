@@ -56,7 +56,7 @@ function LoginPage() {
         <div className="flex flex-col items-center">
           <Link to="/"><Logo className="h-20 w-auto" /></Link>
           <h1 className="mt-4 text-2xl font-bold text-foreground">Iniciar sesión</h1>
-          <p className="text-sm text-muted-foreground">Polla Mundial 2026 Codemodeco</p>
+          <p className="text-sm text-muted-foreground">Polla Mundial Codemodeco 2026</p>
         </div>
 
         <form

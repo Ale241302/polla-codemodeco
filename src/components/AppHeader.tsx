@@ -19,7 +19,7 @@ export function AppHeader() {
         <Link to="/dashboard" className="flex items-center gap-2 min-w-0">
           <Logo className="h-9 w-auto sm:h-10" />
           <span className="hidden text-sm font-semibold text-foreground sm:inline">
-            Polla Mundial 2026
+            Polla Mundial Codemodeco 2026
           </span>
         </Link>
         <nav className="flex items-center gap-1">

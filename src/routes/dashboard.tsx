@@ -10,7 +10,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Trophy, Lock, Save, Crown } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Trophy, Lock, Save, Crown, AlertCircle } from "lucide-react";
+
+interface Team {
+  id: number;
+  name: string;
+  confederation: string;
+  flag_emoji: string | null;
+}
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
@@ -41,6 +55,7 @@ function DashboardPage() {
   const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const [matches, setMatches] = useState<Match[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [predictions, setPredictions] = useState<Record<string, Prediction>>({});
   const [bonus, setBonus] = useState<{ champion: string; runner_up: string }>({
     champion: "",
@@ -64,12 +79,14 @@ function DashboardPage() {
     if (!user || profile?.status !== "approved") return;
     const load = async () => {
       setDataLoading(true);
-      const [{ data: m }, { data: p }, { data: b }] = await Promise.all([
+      const [{ data: m }, { data: p }, { data: b }, { data: t }] = await Promise.all([
         supabase.from("matches").select("*").order("match_date", { ascending: true }),
         supabase.from("predictions").select("*").eq("user_id", user.id),
         supabase.from("bonus_predictions").select("*").eq("user_id", user.id).maybeSingle(),
+        supabase.from("teams").select("*").order("name"),
       ]);
       setMatches((m as Match[]) ?? []);
+      setTeams((t as Team[]) ?? []);
       const map: Record<string, Prediction> = {};
       ((p as Prediction[]) ?? []).forEach((pr) => (map[pr.match_id] = pr));
       setPredictions(map);
@@ -86,6 +103,18 @@ function DashboardPage() {
     () => Object.values(predictions).reduce((s, p) => s + p.points, 0),
     [predictions],
   );
+
+  // Partidos que cierran en las próximas 6 horas y no tienen predicción aún
+  const closingSoon = useMemo(() => {
+    const now = Date.now();
+    return matches.filter((m) => {
+      if (m.status !== "scheduled") return false;
+      const kickoff = new Date(m.match_date).getTime();
+      const deadline = kickoff - DEADLINE_MS;
+      const msToDeadline = deadline - now;
+      return msToDeadline > 0 && msToDeadline < 6 * 60 * 60 * 1000 && !predictions[m.id];
+    });
+  }, [matches, predictions]);
 
   if (loading || !profile || profile.status !== "approved") {
     return (
@@ -110,6 +139,29 @@ function DashboardPage() {
           </div>
         </div>
 
+        {/* Alerta cierre próximo */}
+        {closingSoon.length > 0 && (
+          <Card className="mt-6 border-warning bg-warning/10">
+            <CardContent className="flex items-start gap-3 p-4">
+              <AlertCircle className="h-5 w-5 shrink-0 text-warning" />
+              <div className="text-sm">
+                <p className="font-semibold text-foreground">
+                  ¡Atención! {closingSoon.length}{" "}
+                  {closingSoon.length === 1 ? "partido cierra" : "partidos cierran"} pronto
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Aún no has registrado predicción para:{" "}
+                  {closingSoon
+                    .slice(0, 3)
+                    .map((m) => `${m.home_team} vs ${m.away_team}`)
+                    .join(", ")}
+                  {closingSoon.length > 3 ? " y más." : "."}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Bonus */}
         <Card className="mt-6 border-primary/30">
           <CardHeader className="pb-3">
@@ -122,23 +174,41 @@ function DashboardPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Campeón</label>
-                <Input
+                <Select
                   value={bonus.champion}
-                  onChange={(e) => setBonus((b) => ({ ...b, champion: e.target.value }))}
-                  placeholder="Ej: Argentina"
+                  onValueChange={(v) => setBonus((b) => ({ ...b, champion: v }))}
                   disabled={bonusLocked}
-                  maxLength={40}
-                />
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona campeón" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    {teams.map((t) => (
+                      <SelectItem key={t.id} value={t.name}>
+                        <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Subcampeón</label>
-                <Input
+                <Select
                   value={bonus.runner_up}
-                  onChange={(e) => setBonus((b) => ({ ...b, runner_up: e.target.value }))}
-                  placeholder="Ej: Francia"
+                  onValueChange={(v) => setBonus((b) => ({ ...b, runner_up: v }))}
                   disabled={bonusLocked}
-                  maxLength={40}
-                />
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona subcampeón" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    {teams.map((t) => (
+                      <SelectItem key={t.id} value={t.name}>
+                        <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <Button

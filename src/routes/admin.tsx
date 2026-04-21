@@ -44,6 +44,13 @@ interface Match {
   away_score: number | null;
 }
 
+interface Team {
+  id: number;
+  name: string;
+  confederation: string;
+  flag_emoji: string | null;
+}
+
 function AdminPage() {
   const { isAdmin, loading } = useAuth();
   const navigate = useNavigate();
@@ -169,6 +176,7 @@ function UsersTab() {
 // =============== MATCHES ===============
 function MatchesTab() {
   const [matches, setMatches] = useState<Match[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [home, setHome] = useState("");
   const [away, setAway] = useState("");
   const [date, setDate] = useState("");
@@ -176,14 +184,19 @@ function MatchesTab() {
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
-    const { data } = await supabase.from("matches").select("*").order("match_date");
-    setMatches((data as Match[]) ?? []);
+    const [{ data: m }, { data: t }] = await Promise.all([
+      supabase.from("matches").select("*").order("match_date"),
+      supabase.from("teams").select("*").order("name"),
+    ]);
+    setMatches((m as Match[]) ?? []);
+    setTeams((t as Team[]) ?? []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
   const create = async () => {
     if (!home || !away || !date) return toast.error("Completa todos los campos");
+    if (home === away) return toast.error("El local y el visitante deben ser distintos");
     const { error } = await supabase.from("matches").insert({
       home_team: home.trim(),
       away_team: away.trim(),
@@ -208,11 +221,29 @@ function MatchesTab() {
         <CardContent className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label>Equipo local</Label>
-            <Input value={home} onChange={(e) => setHome(e.target.value)} placeholder="Colombia" />
+            <Select value={home} onValueChange={setHome}>
+              <SelectTrigger><SelectValue placeholder="Selecciona equipo" /></SelectTrigger>
+              <SelectContent className="max-h-80">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.name}>
+                    <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>Equipo visitante</Label>
-            <Input value={away} onChange={(e) => setAway(e.target.value)} placeholder="Brasil" />
+            <Select value={away} onValueChange={setAway}>
+              <SelectTrigger><SelectValue placeholder="Selecciona equipo" /></SelectTrigger>
+              <SelectContent className="max-h-80">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.name}>
+                    <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>Fecha y hora</Label>
@@ -269,14 +300,17 @@ function MatchesTab() {
 // =============== RESULTS ===============
 function ResultsTab() {
   const [matches, setMatches] = useState<Match[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [tournament, setTournament] = useState({ champion: "", runner_up: "" });
 
   const load = async () => {
-    const [{ data: m }, { data: t }] = await Promise.all([
+    const [{ data: m }, { data: t }, { data: tms }] = await Promise.all([
       supabase.from("matches").select("*").order("match_date"),
       supabase.from("tournament_result").select("*").eq("id", 1).maybeSingle(),
+      supabase.from("teams").select("*").order("name"),
     ]);
     setMatches((m as Match[]) ?? []);
+    setTeams((tms as Team[]) ?? []);
     if (t) setTournament({ champion: t.champion ?? "", runner_up: t.runner_up ?? "" });
   };
   useEffect(() => { load(); }, []);
@@ -331,17 +365,35 @@ function ResultsTab() {
         <CardContent className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label>Campeón</Label>
-            <Input
+            <Select
               value={tournament.champion}
-              onChange={(e) => setTournament((t) => ({ ...t, champion: e.target.value }))}
-            />
+              onValueChange={(v) => setTournament((t) => ({ ...t, champion: v }))}
+            >
+              <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+              <SelectContent className="max-h-80">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.name}>
+                    <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>Subcampeón</Label>
-            <Input
+            <Select
               value={tournament.runner_up}
-              onChange={(e) => setTournament((t) => ({ ...t, runner_up: e.target.value }))}
-            />
+              onValueChange={(v) => setTournament((t) => ({ ...t, runner_up: v }))}
+            >
+              <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+              <SelectContent className="max-h-80">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.name}>
+                    <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="sm:col-span-2">
             <Button onClick={saveTournament}>

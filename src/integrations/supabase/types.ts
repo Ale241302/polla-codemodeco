@@ -154,6 +154,30 @@ export type Database = {
         }
         Relationships: []
       }
+      teams: {
+        Row: {
+          id: number
+          name: string
+          confederation: string
+          flag_emoji: string | null
+          group_code: string | null
+        }
+        Insert: {
+          id?: number
+          name: string
+          confederation: string
+          flag_emoji?: string | null
+          group_code?: string | null
+        }
+        Update: {
+          id?: number
+          name?: string
+          confederation?: string
+          flag_emoji?: string | null
+          group_code?: string | null
+        }
+        Relationships: []
+      }
       tournament_result: {
         Row: {
           champion: string | null

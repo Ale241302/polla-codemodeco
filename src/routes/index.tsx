@@ -23,9 +23,8 @@ function Index() {
         <div className="flex flex-col items-center text-center">
           <Logo className="h-24 w-auto sm:h-32" />
           <h1 className="mt-6 text-3xl font-bold tracking-tight text-foreground sm:text-5xl">
-            Polla Mundial 2026
+            Polla Mundial Codemodeco 2026
           </h1>
-          <p className="mt-2 text-lg font-semibold text-primary">Codemodeco</p>
           <p className="mt-4 max-w-xl text-sm text-muted-foreground sm:text-base">
             Plataforma privada para predecir resultados, competir con tus compañeros y coronar al
             mejor pollero del Mundial.

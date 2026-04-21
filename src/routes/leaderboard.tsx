@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { AppHeader } from "@/components/AppHeader";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trophy, Medal, Award } from "lucide-react";
+import { Trophy, Medal, Award, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/leaderboard")({
   component: LeaderboardPage,
@@ -31,17 +32,21 @@ function LeaderboardPage() {
     else if (profile && profile.status !== "approved") navigate({ to: "/pending" });
   }, [user, profile, loading, navigate]);
 
+  const load = async () => {
+    const { data } = await supabase
+      .from("leaderboard")
+      .select("*")
+      .order("total_points", { ascending: false });
+    setRows((data as Row[]) ?? []);
+    setLoadingData(false);
+  };
+
   useEffect(() => {
     if (profile?.status !== "approved") return;
-    const load = async () => {
-      const { data } = await supabase
-        .from("leaderboard")
-        .select("*")
-        .order("total_points", { ascending: false });
-      setRows((data as Row[]) ?? []);
-      setLoadingData(false);
-    };
     load();
+    // Polling cada 30 segundos para mantener el ranking en tiempo real
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
   }, [profile?.status]);
 
   if (!profile || profile.status !== "approved") {
@@ -55,11 +60,17 @@ function LeaderboardPage() {
     <div className="min-h-screen bg-background">
       <AppHeader />
       <main className="container mx-auto px-3 py-6 sm:px-6">
-        <div className="flex items-center gap-2">
-          <Trophy className="h-6 w-6 text-warning" />
-          <h1 className="text-2xl font-bold text-foreground">Tabla de posiciones</h1>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Trophy className="h-6 w-6 text-warning" />
+            <h1 className="text-2xl font-bold text-foreground">Tabla de posiciones</h1>
+          </div>
+          <Button variant="outline" size="sm" onClick={load} disabled={loadingData}>
+            <RefreshCw className={`mr-1 h-4 w-4 ${loadingData ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
         </div>
-        <p className="text-sm text-muted-foreground">Actualizada en tiempo real</p>
+        <p className="text-sm text-muted-foreground">Actualizada automáticamente cada 30 s</p>
 
         {loadingData ? (
           <p className="mt-6 text-sm text-muted-foreground">Cargando...</p>
