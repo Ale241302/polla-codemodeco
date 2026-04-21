@@ -342,16 +342,45 @@ function ResultsTab() {
   };
 
   const saveTournament = async () => {
+    const champion = tournament.champion.trim() || null;
+    const runner_up = tournament.runner_up.trim() || null;
+
+    // Upsert por si la fila id=1 nunca se creó (defensa: si el INSERT del
+    // seed original falló o fue reseteado, update() silenciosamente no hace nada).
     const { error } = await supabase
       .from("tournament_result")
-      .update({
-        champion: tournament.champion.trim() || null,
-        runner_up: tournament.runner_up.trim() || null,
-      })
-      .eq("id", 1);
+      .upsert({ id: 1, champion, runner_up }, { onConflict: "id" });
     if (error) return toast.error(error.message);
-    await supabase.rpc("recalculate_bonus_points");
-    toast.success("Bonus actualizado");
+
+    // La función nueva devuelve JSONB con el diagnóstico exacto.
+    // Si el admin todavía no aplicó la migración 20260421030038 el tipo
+    // será null (versión vieja retorna void); en ese caso hacemos fallback.
+    const { data: rpcData, error: rpcErr } = await supabase.rpc("recalculate_bonus_points");
+    if (rpcErr) return toast.error(rpcErr.message);
+
+    const diag = rpcData as
+      | {
+          total_bonus_rows: number;
+          champion_hits: number;
+          runner_up_hits: number;
+          champion: string | null;
+          runner_up: string | null;
+        }
+      | null;
+
+    if (diag && typeof diag.total_bonus_rows === "number") {
+      if (diag.total_bonus_rows === 0) {
+        toast.warning("Resultado guardado, pero ningún usuario ha predicho bonus aún.");
+      } else {
+        toast.success(
+          `Bonus recalculado — ${diag.total_bonus_rows} predicción${
+            diag.total_bonus_rows === 1 ? "" : "es"
+          } revisadas · ${diag.champion_hits} acertaron campeón · ${diag.runner_up_hits} acertaron subcampeón.`,
+        );
+      }
+    } else {
+      toast.success("Bonus actualizado");
+    }
   };
 
   return (
