@@ -8,6 +8,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Eye, EyeOff } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -23,6 +24,7 @@ function LoginPage() {
   const { user, loading } = useAuth();
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -77,14 +79,26 @@ function LoginPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Contraseña</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           <Button type="submit" className="w-full" disabled={submitting}>
             {submitting ? "Ingresando..." : "Entrar"}
