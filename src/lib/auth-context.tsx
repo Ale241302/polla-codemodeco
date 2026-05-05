@@ -31,16 +31,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const loadProfile = async (uid: string) => {
-    const { data: prof } = await supabase
+    const { data: prof, error: profError } = await supabase
       .from("profiles")
       .select("id, cedula, full_name, status")
       .eq("id", uid)
       .maybeSingle();
 
-    const { data: roles } = await supabase
+    if (profError) {
+      // eslint-disable-next-line no-console
+      console.error("[auth] Error cargando perfil:", profError);
+    }
+    if (!prof && !profError) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[auth] No se encontró fila en public.profiles para el usuario autenticado",
+        uid,
+      );
+    }
+
+    const { data: roles, error: rolesError } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", uid);
+
+    if (rolesError) {
+      // eslint-disable-next-line no-console
+      console.error("[auth] Error cargando roles:", rolesError);
+    }
 
     setProfile((prof as ProfileInfo) ?? null);
     setIsAdmin(!!roles?.some((r) => r.role === "admin"));

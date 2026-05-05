@@ -53,7 +53,7 @@ interface Prediction {
 const DEADLINE_MS = 3 * 60 * 60 * 1000;
 
 function DashboardPage() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const [matches, setMatches] = useState<Match[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -73,7 +73,13 @@ function DashboardPage() {
       navigate({ to: "/login" });
       return;
     }
-    if (profile && profile.status !== "approved") {
+    if (!profile) {
+      // Usuario autenticado pero sin fila en public.profiles
+      // (puede pasar si el admin borró el perfil manualmente).
+      // No redirigimos: el render mostrará un mensaje con botón de logout.
+      return;
+    }
+    if (profile.status !== "approved") {
       navigate({ to: "/pending" });
     }
   }, [user, profile, loading, navigate]);
@@ -129,7 +135,43 @@ function DashboardPage() {
     });
   }, [matches, predictions]);
 
-  if (loading || !profile || profile.status !== "approved") {
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Cargando...
+      </div>
+    );
+  }
+
+  if (user && !profile) {
+    // Autenticado, pero el perfil no existe en public.profiles.
+    // Mostramos un mensaje claro y dejamos cerrar sesión.
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+        <AlertCircle className="h-10 w-10 text-warning" />
+        <div className="max-w-md">
+          <h1 className="text-lg font-semibold text-foreground">
+            No se encontró tu perfil
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Tu sesión está activa pero no hay datos asociados en la base de datos.
+            Cierra sesión y contacta al administrador.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            await signOut();
+            navigate({ to: "/login" });
+          }}
+        >
+          Cerrar sesión
+        </Button>
+      </div>
+    );
+  }
+
+  if (!profile || profile.status !== "approved") {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
         Cargando...
