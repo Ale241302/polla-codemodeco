@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
@@ -56,10 +56,26 @@ interface Team {
 function AdminPage() {
   const { isAdmin, loading } = useAuth();
   const navigate = useNavigate();
+  const [userCount, setUserCount] = useState<number | null>(null);
+  const [predictionCount, setPredictionCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!loading && !isAdmin) navigate({ to: "/dashboard" });
   }, [isAdmin, loading, navigate]);
+
+  const refreshCounts = useCallback(async () => {
+    const [{ count: uc }, { count: mpc }, { count: bpc }] = await Promise.all([
+      supabase.from("profiles").select("*", { count: "exact", head: true }),
+      supabase.from("predictions").select("*", { count: "exact", head: true }),
+      supabase.from("bonus_predictions").select("*", { count: "exact", head: true }),
+    ]);
+    setUserCount(uc ?? 0);
+    setPredictionCount((mpc ?? 0) + (bpc ?? 0));
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) refreshCounts();
+  }, [isAdmin, refreshCounts]);
 
   if (loading) return <div className="flex min-h-screen items-center justify-center">Cargando...</div>;
   if (!isAdmin) return null;
@@ -73,15 +89,33 @@ function AdminPage() {
 
         <Tabs defaultValue="users" className="mt-6">
           <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
-            <TabsTrigger value="users">Usuarios</TabsTrigger>
+            <TabsTrigger value="users" className="gap-1.5">
+              Usuarios
+              {userCount !== null && (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-semibold">
+                  {userCount}
+                </Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="matches">Partidos</TabsTrigger>
             <TabsTrigger value="results">Resultados</TabsTrigger>
-            <TabsTrigger value="predictions">Predicciones</TabsTrigger>
+            <TabsTrigger value="predictions" className="gap-1.5">
+              Predicciones
+              {predictionCount !== null && (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-semibold">
+                  {predictionCount}
+                </Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
-          <TabsContent value="users" className="mt-4"><UsersTab /></TabsContent>
+          <TabsContent value="users" className="mt-4">
+            <UsersTab onDataChanged={refreshCounts} />
+          </TabsContent>
           <TabsContent value="matches" className="mt-4"><MatchesTab /></TabsContent>
           <TabsContent value="results" className="mt-4"><ResultsTab /></TabsContent>
-          <TabsContent value="predictions" className="mt-4"><PredictionsTab /></TabsContent>
+          <TabsContent value="predictions" className="mt-4">
+            <PredictionsTab onDataChanged={refreshCounts} />
+          </TabsContent>
         </Tabs>
       </main>
     </div>
@@ -89,7 +123,7 @@ function AdminPage() {
 }
 
 // =============== USERS ===============
-function UsersTab() {
+function UsersTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -101,6 +135,7 @@ function UsersTab() {
       .order("created_at", { ascending: false });
     setProfiles((data as Profile[]) ?? []);
     setLoading(false);
+    onDataChanged?.();
   };
 
   useEffect(() => { load(); }, []);
@@ -473,7 +508,7 @@ interface BonusPredictionRow {
   user_cedula: string;
 }
 
-function PredictionsTab() {
+function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const [matchPreds, setMatchPreds] = useState<MatchPredictionRow[]>([]);
   const [bonusPreds, setBonusPreds] = useState<BonusPredictionRow[]>([]);
   const [bonusEnabled, setBonusEnabled] = useState(true);
@@ -581,6 +616,7 @@ function PredictionsTab() {
       setBonusEnabled(true);
     }
     setLoading(false);
+    onDataChanged?.();
   };
 
   useEffect(() => {
