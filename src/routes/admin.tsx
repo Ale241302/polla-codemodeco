@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
@@ -21,7 +21,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Check, X, Lock, Trash2, Plus, RefreshCw, Save, Crown, ListChecks } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Check, X, Lock, Trash2, Plus, Pencil, RefreshCw, Save, Crown, ListChecks } from "lucide-react";
 
 export const Route = createFileRoute("/admin")({
   component: AdminPage,
@@ -52,6 +60,34 @@ interface Team {
   confederation: string;
   flag_emoji: string | null;
 }
+
+interface ProfileLite {
+  id: string;
+  full_name: string;
+  cedula: string;
+}
+
+interface MatchLite {
+  id: string;
+  home_team: string;
+  away_team: string;
+  match_date: string;
+  status: Match["status"];
+}
+
+const PHASES = [
+  "Fase de grupos",
+  "Octavos de final",
+  "Cuartos de final",
+  "Semifinal",
+  "Tercer puesto",
+  "Final",
+];
+
+/** datetime-local ("2026-06-11T14:00") → timestamptz literal sin conversión de zona */
+const toDbDate = (v: string) => `${v}:00+00:00`;
+/** timestamptz de la BD → valor para input datetime-local, mostrando la hora tal como se guardó */
+const toInputDate = (v: string) => format(asUtcLocal(v), "yyyy-MM-dd'T'HH:mm");
 
 function AdminPage() {
   const { isAdmin, loading } = useAuth();
@@ -239,7 +275,7 @@ function MatchesTab() {
     const { error } = await supabase.from("matches").insert({
       home_team: home.trim(),
       away_team: away.trim(),
-      match_date: new Date(date).toISOString(),
+      match_date: toDbDate(date),
       phase,
     });
     if (error) toast.error(error.message);
@@ -324,15 +360,176 @@ function MatchesTab() {
                   </p>
                   <Badge variant="secondary" className="mt-1">{m.status}</Badge>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => remove(m.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <EditMatchDialog match={m} teams={teams} onSaved={load} />
+                  <Button size="sm" variant="ghost" onClick={() => remove(m.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// =============== EDIT MATCH ===============
+function EditMatchDialog({
+  match,
+  teams,
+  onSaved,
+}: {
+  match: Match;
+  teams: Team[];
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [home, setHome] = useState(match.home_team);
+  const [away, setAway] = useState(match.away_team);
+  const [date, setDate] = useState(toInputDate(match.match_date));
+  const [phase, setPhase] = useState(match.phase);
+  const [status, setStatus] = useState<Match["status"]>(match.status);
+  const [saving, setSaving] = useState(false);
+
+  const handleOpenChange = (o: boolean) => {
+    if (o) {
+      setHome(match.home_team);
+      setAway(match.away_team);
+      setDate(toInputDate(match.match_date));
+      setPhase(match.phase);
+      setStatus(match.status);
+    }
+    setOpen(o);
+  };
+
+  const save = async () => {
+    if (!home || !away || !date) return toast.error("Completa todos los campos");
+    if (home === away) return toast.error("El local y el visitante deben ser distintos");
+    setSaving(true);
+    // Si se reabre el partido (vuelve a "scheduled"), se borra el marcador
+    // y se recalculan los puntos para que nadie conserve puntos de un
+    // resultado que ya no existe.
+    const reopened = status === "scheduled" && match.status !== "scheduled";
+    const payload: {
+      home_team: string;
+      away_team: string;
+      match_date: string;
+      phase: string;
+      status: Match["status"];
+      home_score?: number | null;
+      away_score?: number | null;
+    } = {
+      home_team: home,
+      away_team: away,
+      match_date: toDbDate(date),
+      phase,
+      status,
+    };
+    if (reopened) {
+      payload.home_score = null;
+      payload.away_score = null;
+    }
+    const { error } = await supabase.from("matches").update(payload).eq("id", match.id);
+    if (error) {
+      setSaving(false);
+      return toast.error(error.message);
+    }
+    if (reopened) {
+      await supabase.rpc("recalculate_match_points", { p_match_id: match.id });
+    }
+    setSaving(false);
+    setOpen(false);
+    toast.success(
+      reopened
+        ? "Partido reabierto: marcador borrado y predicciones habilitadas de nuevo"
+        : "Partido actualizado",
+    );
+    onSaved();
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="ghost" onClick={() => handleOpenChange(true)} title="Editar partido">
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar partido</DialogTitle>
+            <DialogDescription>
+              Para que los usuarios puedan volver a predecir, deja el estado en
+              «Programado» y pon una fecha con suficiente anticipación.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Equipo local</Label>
+              <Select value={home} onValueChange={setHome}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-80">
+                  {teams.map((t) => (
+                    <SelectItem key={t.id} value={t.name}>
+                      <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Equipo visitante</Label>
+              <Select value={away} onValueChange={setAway}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-80">
+                  {teams.map((t) => (
+                    <SelectItem key={t.id} value={t.name}>
+                      <span className="mr-1">{t.flag_emoji}</span>{t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Fecha y hora</Label>
+              <Input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Fase</Label>
+              <Select value={phase} onValueChange={setPhase}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PHASES.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Estado</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as Match["status"])}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="scheduled">Programado</SelectItem>
+                  <SelectItem value="live">En juego</SelectItem>
+                  <SelectItem value="finished">Finalizado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {status === "scheduled" && match.status !== "scheduled" && (
+            <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
+              Al volver a «Programado» se borrará el marcador y se pondrán en 0 los
+              puntos de este partido. Los usuarios podrán predecir de nuevo.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+            <Button onClick={save} disabled={saving}>
+              <Save className="mr-1 h-4 w-4" /> {saving ? "Guardando..." : "Guardar cambios"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -511,9 +708,13 @@ interface BonusPredictionRow {
 function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const [matchPreds, setMatchPreds] = useState<MatchPredictionRow[]>([]);
   const [bonusPreds, setBonusPreds] = useState<BonusPredictionRow[]>([]);
+  const [profilesList, setProfilesList] = useState<ProfileLite[]>([]);
+  const [matchesList, setMatchesList] = useState<MatchLite[]>([]);
   const [bonusEnabled, setBonusEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogInitial, setDialogInitial] = useState<{ userId: string; matchId: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -560,15 +761,6 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
       champion_points: number;
       runner_up_points: number;
     };
-    type ProfileLite = { id: string; full_name: string; cedula: string };
-    type MatchLite = {
-      id: string;
-      home_team: string;
-      away_team: string;
-      match_date: string;
-      status: Match["status"];
-    };
-
     const profileById = new Map<string, ProfileLite>();
     ((profs as ProfileLite[] | null) ?? []).forEach((p) => profileById.set(p.id, p));
 
@@ -609,6 +801,16 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
 
     setMatchPreds(mp);
     setBonusPreds(bp);
+    setProfilesList(
+      [...((profs as ProfileLite[] | null) ?? [])].sort((a, b) =>
+        a.full_name.localeCompare(b.full_name),
+      ),
+    );
+    setMatchesList(
+      [...((matchList as MatchLite[] | null) ?? [])].sort(
+        (a, b) => new Date(a.match_date).getTime() - new Date(b.match_date).getTime(),
+      ),
+    );
 
     if (setting && setting.value != null) {
       setBonusEnabled(setting.value === true || setting.value === "true");
@@ -713,7 +915,26 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
         <Button variant="outline" size="sm" onClick={load}>
           <RefreshCw className="mr-1 h-4 w-4" /> Recargar
         </Button>
+        <Button
+          size="sm"
+          onClick={() => {
+            setDialogInitial(null);
+            setDialogOpen(true);
+          }}
+        >
+          <Plus className="mr-1 h-4 w-4" /> Nueva predicción
+        </Button>
       </div>
+
+      <AdminPredictionDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        profiles={profilesList}
+        matchesList={matchesList}
+        existing={matchPreds}
+        initial={dialogInitial}
+        onSaved={load}
+      />
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Cargando predicciones...</p>
@@ -766,6 +987,17 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
                                 ? "En juego"
                                 : "Finalizado"}
                           </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setDialogInitial({ userId: p.user_id, matchId: p.match_id });
+                              setDialogOpen(true);
+                            }}
+                            title="Editar predicción"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
@@ -842,6 +1074,179 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
         </>
       )}
     </div>
+  );
+}
+
+// =============== ADMIN PREDICTION DIALOG (modal) ===============
+function AdminPredictionDialog({
+  open,
+  onOpenChange,
+  profiles,
+  matchesList,
+  existing,
+  initial,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  profiles: ProfileLite[];
+  matchesList: MatchLite[];
+  existing: MatchPredictionRow[];
+  initial: { userId: string; matchId: string } | null;
+  onSaved: () => void;
+}) {
+  const [userId, setUserId] = useState("");
+  const [matchId, setMatchId] = useState("");
+  const [h, setH] = useState("");
+  const [a, setA] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const existingPred = useMemo(
+    () =>
+      userId && matchId
+        ? existing.find((e) => e.user_id === userId && e.match_id === matchId) ?? null
+        : null,
+    [existing, userId, matchId],
+  );
+
+  // Al abrir: aplicar valores iniciales (modo edición) o limpiar (modo nuevo)
+  useEffect(() => {
+    if (!open) return;
+    setUserId(initial?.userId ?? "");
+    setMatchId(initial?.matchId ?? "");
+    setH("");
+    setA("");
+  }, [open, initial]);
+
+  // Si el usuario+partido ya tiene predicción, precargar el marcador
+  useEffect(() => {
+    if (existingPred) {
+      setH(String(existingPred.home_score));
+      setA(String(existingPred.away_score));
+    } else {
+      setH("");
+      setA("");
+    }
+  }, [existingPred]);
+
+  const selectedMatch = matchesList.find((m) => m.id === matchId) ?? null;
+  const selectedUser = profiles.find((p) => p.id === userId) ?? null;
+
+  const save = async () => {
+    if (!userId || !matchId) return toast.error("Selecciona usuario y partido");
+    const hi = parseInt(h, 10);
+    const ai = parseInt(a, 10);
+    if (isNaN(hi) || isNaN(ai)) return toast.error("Ingresa el marcador completo");
+
+    setSaving(true);
+    const { error } = await supabase
+      .from("predictions")
+      .upsert(
+        { user_id: userId, match_id: matchId, home_score: hi, away_score: ai },
+        { onConflict: "user_id,match_id" },
+      );
+    if (error) {
+      setSaving(false);
+      return toast.error(error.message);
+    }
+    // Si el partido ya tiene resultado, recalcular puntos de inmediato
+    if (selectedMatch && selectedMatch.status === "finished") {
+      await supabase.rpc("recalculate_match_points", { p_match_id: matchId });
+    }
+    setSaving(false);
+    onOpenChange(false);
+    toast.success(
+      existingPred
+        ? `Predicción de ${selectedUser?.full_name ?? "usuario"} modificada`
+        : `Predicción registrada para ${selectedUser?.full_name ?? "usuario"}`,
+    );
+    onSaved();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{existingPred ? "Modificar predicción" : "Nueva predicción"}</DialogTitle>
+          <DialogDescription>
+            Registra o modifica la predicción de un usuario para cualquier partido.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label>Usuario</Label>
+            <Select value={userId} onValueChange={setUserId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecciona usuario" />
+              </SelectTrigger>
+              <SelectContent className="max-h-80">
+                {profiles.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.full_name} — CC {p.cedula}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Partido</Label>
+            <Select value={matchId} onValueChange={setMatchId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecciona partido" />
+              </SelectTrigger>
+              <SelectContent className="max-h-80">
+                {matchesList.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.home_team} vs {m.away_team} ·{" "}
+                    {format(asUtcLocal(m.match_date), "d MMM HH:mm", { locale: es })}
+                    {m.status !== "scheduled" &&
+                      (m.status === "live" ? " (en juego)" : " (finalizado)")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {existingPred && (
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              Este usuario ya tiene una predicción para este partido:{" "}
+              <span className="font-semibold text-foreground">
+                {existingPred.home_score} – {existingPred.away_score}
+              </span>
+              . Al guardar se modificará.
+            </p>
+          )}
+
+          <div className="space-y-1">
+            <Label>Marcador {selectedMatch ? `(${selectedMatch.home_team} – ${selectedMatch.away_team})` : ""}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                className="h-10 w-16 text-center"
+                inputMode="numeric"
+                placeholder="0"
+                value={h}
+                onChange={(e) => setH(e.target.value.replace(/\D/g, "").slice(0, 2))}
+              />
+              <span className="text-lg">–</span>
+              <Input
+                className="h-10 w-16 text-center"
+                inputMode="numeric"
+                placeholder="0"
+                value={a}
+                onChange={(e) => setA(e.target.value.replace(/\D/g, "").slice(0, 2))}
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>
+            <Save className="mr-1 h-4 w-4" />{" "}
+            {saving ? "Guardando..." : existingPred ? "Modificar predicción" : "Guardar predicción"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
