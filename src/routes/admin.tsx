@@ -148,7 +148,7 @@ function UsersTab({ onDataChanged }: { onDataChanged?: () => void }) {
 
   const remove = async (id: string) => {
     if (!confirm("¿Eliminar este usuario y todos sus datos?")) return;
-    const { error } = await supabase.from("profiles").delete().eq("id", id);
+    const { error } = await supabase.rpc("delete_user_admin", { target_user_id: id });
     if (error) toast.error(error.message);
     else { toast.success("Eliminado"); load(); }
   };
