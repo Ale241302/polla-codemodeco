@@ -721,30 +721,6 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
     // Queries separadas: no usamos embed de PostgREST porque
     // predictions.user_id referencia auth.users(id), no profiles.id,
     // así que Supabase no puede inferir el join y devolvería 0 filas.
-    const [
-      { data: preds, error: e1 },
-      { data: bonus, error: e2 },
-      { data: profs, error: e3 },
-      { data: matchList, error: e4 },
-      { data: setting, error: e5 },
-    ] = await Promise.all([
-      supabase
-        .from("predictions")
-        .select("id, user_id, match_id, home_score, away_score, points")
-        .order("match_id", { ascending: true }),
-      supabase
-        .from("bonus_predictions")
-        .select("id, user_id, champion, runner_up, champion_points, runner_up_points"),
-      supabase.from("profiles").select("id, full_name, cedula"),
-      supabase.from("matches").select("id, home_team, away_team, match_date, status"),
-      supabase.from("app_settings").select("value").eq("key", "bonus_enabled").maybeSingle(),
-    ]);
-
-    const firstError = e1 ?? e2 ?? e3 ?? e4 ?? e5;
-    if (firstError) {
-      toast.error(`Error cargando predicciones: ${firstError.message}`);
-    }
-
     type PredRaw = {
       id: string;
       user_id: string;
@@ -753,6 +729,72 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
       away_score: number;
       points: number;
     };
+
+    let page = 0;
+    const pageSize = 1000;
+    let allPreds: PredRaw[] = [];
+    let hasMore = true;
+    let predictionsError: any = null;
+
+    const [
+      { data: initialPreds, error: e1 },
+      { data: bonus, error: e2 },
+      { data: profs, error: e3 },
+      { data: matchList, error: e4 },
+      { data: setting, error: e5 },
+    ] = await Promise.all([
+      supabase
+        .from("predictions")
+        .select("id, user_id, match_id, home_score, away_score, points")
+        .order("match_id", { ascending: true })
+        .range(0, pageSize - 1),
+      supabase
+        .from("bonus_predictions")
+        .select("id, user_id, champion, runner_up, champion_points, runner_up_points"),
+      supabase.from("profiles").select("id, full_name, cedula"),
+      supabase.from("matches").select("id, home_team, away_team, match_date, status"),
+      supabase.from("app_settings").select("value").eq("key", "bonus_enabled").maybeSingle(),
+    ]);
+
+    if (e1) {
+      predictionsError = e1;
+    } else if (initialPreds) {
+      allPreds = [...initialPreds] as unknown as PredRaw[];
+      if (initialPreds.length < pageSize) {
+        hasMore = false;
+      } else {
+        page = 1;
+      }
+    }
+
+    while (hasMore && !predictionsError) {
+      const { data, error } = await supabase
+        .from("predictions")
+        .select("id, user_id, match_id, home_score, away_score, points")
+        .order("match_id", { ascending: true })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        predictionsError = error;
+        break;
+      }
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allPreds = [...allPreds, ...(data as unknown as PredRaw[])];
+        if (data.length < pageSize) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+    }
+
+    const firstError = predictionsError ?? e2 ?? e3 ?? e4 ?? e5;
+    if (firstError) {
+      toast.error(`Error cargando predicciones: ${firstError.message}`);
+    }
+
     type BonusRaw = {
       id: string;
       user_id: string;
@@ -767,7 +809,7 @@ function PredictionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
     const matchById = new Map<string, MatchLite>();
     ((matchList as MatchLite[] | null) ?? []).forEach((m) => matchById.set(m.id, m));
 
-    const mp: MatchPredictionRow[] = ((preds as PredRaw[] | null) ?? []).map((p) => {
+    const mp: MatchPredictionRow[] = (allPreds ?? []).map((p) => {
       const prof = profileById.get(p.user_id);
       const m = matchById.get(p.match_id);
       return {
