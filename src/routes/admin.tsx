@@ -77,6 +77,7 @@ interface MatchLite {
 
 const PHASES = [
   "Fase de grupos",
+  "Dieciseisavos de final",
   "Octavos de final",
   "Cuartos de final",
   "Semifinal",
@@ -330,6 +331,7 @@ function MatchesTab() {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="Fase de grupos">Fase de grupos</SelectItem>
+                <SelectItem value="Dieciseisavos de final">Dieciseisavos de final</SelectItem>
                 <SelectItem value="Octavos de final">Octavos de final</SelectItem>
                 <SelectItem value="Cuartos de final">Cuartos de final</SelectItem>
                 <SelectItem value="Semifinal">Semifinal</SelectItem>
